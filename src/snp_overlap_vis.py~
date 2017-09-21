@@ -1,0 +1,48 @@
+from matplotlib.colors import ListedColormap
+
+import matplotlib
+matplotlib.use('Agg')
+
+import seaborn as sns
+
+
+def generate_heatmap(generator, snp_df, heatmap_folder, color_scheme, snp_limit=50, show_plots=True):
+    for locus, locus_df in generator:
+        display_df = locus_df
+
+        if display_df.shape[1] > snp_limit:
+            threshold = 0
+
+            print("{} has too many SNPS need to prune!!!".format(locus))
+
+            while display_df.shape[1] > snp_limit:
+                value_df = display_df != 0
+                value_df = value_df.sum(axis=0).reset_index()
+                print value_df
+                display_df = display_df.T.loc[value_df[value_df[0] > threshold]["index"]].T
+                threshold = threshold + 1
+           
+        # TODO make not hardcoded add flag
+        display_df = display_df.T.sort_values(["ATAC ADP Undiff", "ATAC ADP Diff"], ascending=False)
+
+        # Change the figure size
+        sns.set_context("paper")
+        sns.plt.figure(figsize=(10, 6))
+
+        ax = sns.heatmap(display_df,
+                         cmap=ListedColormap(map(lambda x: x.rgb, color_scheme)), linewidths=0.5, cbar=True, square=False,
+                         vmin=-1, vmax=3)
+
+        ax.set_xticklabels(ax.xaxis.get_majorticklabels(), rotation=10, fontsize='x-small')
+        ax.set_yticklabels(ax.yaxis.get_majorticklabels(), rotation=0, fontsize=7)
+        ax.set_title("Peak Overlap Heatmap ({})\n Total # SNPS: {} \n Sentinel SNP: {}".format(
+            locus, snp_df[snp_df["Locus"] == locus].shape[0],
+            snp_df[snp_df["Locus"] == locus]["Sentinel"].values[0])
+        )
+
+        sns.plt.savefig("{}/{}.png".format(heatmap_folder, locus))
+
+        if show_plots:
+            sns.plt.show()
+
+        sns.plt.close()

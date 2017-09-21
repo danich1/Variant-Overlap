@@ -1,0 +1,85 @@
+import glob
+import os
+import sys
+
+import pandas as pd
+
+def calculate_rsquared(command, snp_list, imputation_path, r2_cutoff):
+    for index, row in snp_list.iterrows():
+        return_code = os.system(command.format(imputation_path, row["Chr"], row["SNP"], r2_cutoff, row["SNP"]))
+        if return_code:
+            sys.stderr.write("SNP {} caused an error.\n".format(row["SNP"]))
+    return
+
+
+def calculate_overlap(command):
+    return os.system(command)
+
+
+def generate_locus_dataframe_generator(overlap_df, snp_df, peak_df, locus=None):
+    if locus:
+        for locus in snp_df[snp_df["Locus"] == locus]["Locus"].unique():
+            rsquared_list = snp_df[snp_df["Locus"] == locus]["RSquared"]
+            snp_list = snp_df[snp_df["Locus"] == locus]["SNP"]
+
+            snp_list = list(map(lambda x: x[0] + " ({})".format(x[1]), zip(snp_list, rsquared_list)))
+            membership_df = pd.DataFrame(0, index=peak_df["Label"].unique(), columns=snp_list)
+
+            for index, row in overlap_df[overlap_df["Locus"] == locus].iterrows():
+                score = peak_df[peak_df["File_Path"] == row["Peak"]]["Score"].values[0]
+                snp_id = row["SNP"] + " ({})".format(row["RSquared"])
+                mark_label = peak_df[peak_df["File_Path"] == row["Peak"]]["Label"]
+                membership_df.loc[mark_label, snp_id] += score
+
+            yield (locus, membership_df)
+    else:
+        for locus in snp_df["Locus"].unique(): # snp_df[snp_df["Locus"] == "CALCRL"]["Locus"].unique():
+            rsquared_list = snp_df[snp_df["Locus"] == locus]["RSquared"]
+            snp_list = snp_df[snp_df["Locus"] == locus]["SNP"]
+
+            snp_list = list(map(lambda x: x[0] + " ({})".format(x[1]), zip(snp_list, rsquared_list)))
+            membership_df = pd.DataFrame(0, index=peak_df["Label"].unique(), columns=snp_list)
+
+            for index, row in overlap_df[overlap_df["Locus"] == locus].iterrows():
+                score = peak_df[peak_df["File_Path"] == row["Peak"]]["Score"].values[0]
+                snp_id = row["SNP"] + " ({})".format(row["RSquared"])
+                mark_label = peak_df[peak_df["File_Path"] == row["Peak"]]["Label"]
+                membership_df.loc[mark_label, snp_id] += score
+
+            yield (locus, membership_df)
+
+
+def write_merged_snps(snp_df):
+    final_df = pd.DataFrame([], columns=["Chr", "Start", "End", "SNP", "Locus", "Sentinel", "R2"])
+
+    for snp_file in glob.glob("*.ld"):
+        proxy_df = pd.read_csv(snp_file, delimiter=r'\s+')
+        sentinel = proxy_df["SNP_A"].unique()[0]
+        
+        # drop the rows with no variants named
+        proxy_df = proxy_df[proxy_df["SNP_B"] != '.']
+        sentinel_row = snp_df[snp_df["SNP"] == sentinel]
+
+        proxy_df["Locus"] = sentinel_row["Locus"].values[0]
+        proxy_df["Sentinel"] = sentinel
+        proxy_df["Chr"] = proxy_df["CHR_B"]
+
+        proxy_df["Start"] = proxy_df["BP_B"]
+        proxy_df["End"] = proxy_df["Start"] + 1
+        proxy_df["SNP"] = proxy_df["SNP_B"]
+
+        final_df = final_df.append(proxy_df[["Chr", "Start", "End", "SNP", "Locus", "Sentinel", "R2"]])
+
+    # Sort the dataframe for easy of use with bedtools
+    final_df = final_df.sort_values(["Chr", "Start"])
+
+    # Convert the columns into the correct datatype
+    # Pandas defaults to float64
+    final_df["Chr"] = final_df["Chr"].astype(int)
+    final_df["Start"] = final_df["Start"].astype(int)
+    final_df["End"] = final_df["End"].astype(int)
+
+    # Add chr to the beginning of each chromosome
+    final_df["Chr"] = final_df["Chr"].map(lambda x: "chr" + str(x))
+    final_df.to_csv("overlap_files/imputed_snps.bed", sep='\t', header=False, index=False)
+    return

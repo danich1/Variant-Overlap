@@ -1,0 +1,75 @@
+import argparse
+
+from colour import Color
+
+from snp_overlap_utils import *
+from snp_overlap_vis import *
+
+# Set up the command line arguments
+parser = argparse.ArgumentParser(description='This program is designed to find SNPS that overlap called NGS peaks.')
+parser.add_argument('--plink', '-pl', help='Optional Argument to tell the program to use plink to calculate r2.', action="store_true")
+parser.add_argument('--imputation_path', '-i', type=str, help='Path that points to the imputed snps.')
+parser.add_argument('--r_squared', '-r', type=float, help='Specifies an r_squared cutoff value.', default=0.4)
+parser.add_argument('--snp_file', '-s',  type=str, help='Path to the file containing the list of snps. Can already contain proxy snps or use'
+                                                        ' plink to calculate r2 to find the proxy snps.', required=True)
+parser.add_argument("--peak_file", '-p', type=str, help='Path to file that contains a directory of all peaks used by this program.', required=True)
+parser.add_argument('--overlap_file', '-o', type=str, help='Optional argument to name the overlap file for bedtool output.', default="overlap_files/snp_overlap.bed")
+parser.add_argument('--heatmap_folder', '-m', type=str, help='Specifies the location to store the generated heatmap files.', default="overlap_files/heatmap")
+parser.add_argument('--show_plot', '-sh', help='Optional argument to have the script show an interactive heatmap graph.', action="store_true")
+parser.add_argument('--locus','-l', type=str, help='Optional argument to specify a single locus to graph')
+args = parser.parse_args()
+
+if not os.path.exists("overlap_files"):
+    os.mkdir("overlap_files")
+    os.mkdir("heatmap")
+
+# Gather imputed snps
+if args.plink:
+
+    print("Gathering Proxy Snps")
+    plink_command = "plink --vcf {}/{}.vcf.gz --ld-snp {} --ld-window-r2 {} --out {}_LD_block --double-id --r2 inter-chr with-freqs --memory 6000"
+    snp_df = pd.read_csv(args.snp_file, delimiter=r'\s+',engine='python')
+
+    if not os.path.exists("plink_temp"):
+        os.mkdir("plink_temp")
+
+    # Contain the massive files that are going to be generated
+    os.chdir("plink_temp")
+
+    # Run the plink command
+   # calculate_rsquared(plink_command, snp_df, args.imputation_path, args.r_squared)
+
+    #Change back to parent directory
+    os.chdir("..")
+
+    # Merge the individual ld files
+    write_merged_snps(snp_df)
+
+# Gather the snp list path for overlap calculation
+snp_list_file = args.snp_file if not args.plink else "overlap_files/imputed_snps.bed"
+
+# Bedtool intersection
+print("Calculating SNP Overlap")
+peak_df = pd.read_csv(args.peak_file, delimiter=r'[\t|,]', engine="python")
+bedtools_command = "bedtools intersect -a {} -b {} -filenames -wa -wb > {}".format(snp_list_file, " ".join(peak_df["File_Path"]), args.overlap_file)
+calculate_overlap(bedtools_command)
+
+#Geneate a SNP heatmap
+print("Generating HeatMap")
+
+# Name of the columns pandas will use
+snp_names = ["Chr", "Start", "End", "SNP", "Locus", "Sentinel", "RSquared"]
+overlap_names = ["ChrA", "Start", "End", "SNP","Locus", "Sentinel", "RSquared", "Peak", "ChrB", "Start", "End"]
+
+# Open the files
+snp_df = pd.read_csv(snp_list_file, names=snp_names, sep="\t")
+overlap_df = pd.read_csv(args.overlap_file, names=overlap_names, sep="\t", usecols=range(len(overlap_names)),index_col=False, header=None)
+
+# TODO make not hardcoded add possible customization file
+# ["#ff0000","#FF9900","#FFFFFF","#ffff00","#00cc00"] #red, orange, white, yellow, green
+flatui = list(Color("#ff0000").range_to(Color("#FFA500"), 3))
+flatui = flatui + [Color("white")]
+flatui = flatui + list(Color("#FFFF00").range_to(Color("#008000"), 3))
+
+locus_generator = generate_locus_dataframe_generator(overlap_df, snp_df, peak_df, locus=args.locus)
+generate_heatmap(locus_generator, snp_df, args.heatmap_folder, flatui, show_plots=args.show_plot)
